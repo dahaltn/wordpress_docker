@@ -1,0 +1,89 @@
+version: '3.4'
+services:
+  traefik:
+    image: traefik:latest
+    container_name: wordpress_treafik
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik-data/traefik-non-secure.yml:/traefik.yml:ro
+      - ./traefik-data/configurations:/configurations
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=app-network"
+      - "traefik.http.routers.traefik.entrypoints=web"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.wordpress.local`)"
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.routers.traefik.middlewares=user-auth@file"
+    networks:
+      - app-network
+  #PHP Service
+  php:
+    build:
+      context: ./wordpress
+      dockerfile: Dockerfile
+    image: wordpress_docker:latest
+    container_name: php_fpm
+    restart: unless-stopped
+    tty: true
+    environment:
+      SERVICE_NAME: php
+      SERVICE_TAGS: dev
+    working_dir: /var/www/html
+    volumes:
+      - ./wordpress:/var/www/html
+      - ./php/php.ini-development:/usr/local/etc/php/conf.d/local.ini
+    networks:
+      - app-network
+
+  #Nginx Service
+  webserver:
+    image: nginx:alpine
+    container_name: wordpress_webserver
+    restart: unless-stopped
+    depends_on:
+      - php
+      - db
+    volumes:
+      - ./wordpress:/var/www/html
+      - ./nginx/conf.d:/etc/nginx/conf.d
+    networks:
+      - app-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=app-network"
+      - "traefik.http.routers.web.entrypoints=web"
+#      - "traefik.http.routers.web-secure.rule=Host(`local.laravel`)"
+      - "traefik.http.routers.web.rule=HostRegexp(`{subdomain:[a-z0-9]+}.app.wordpress.local`, `wordpress.local`)"
+
+  #MySQL Service
+  db:
+    image: mysql:5.7.22
+    container_name: wordpress_db
+    restart: unless-stopped
+    tty: true
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_DATABASE: wordpress
+      MYSQL_ROOT_PASSWORD: password
+      SERVICE_TAGS: dev
+      SERVICE_NAME: mysql
+    volumes:
+      - dbdata:/var/lib/mysql
+      - ./mysql/mysql.cnf:/etc/mysql/mysql.cnf
+    networks:
+      - app-network
+
+#Docker Networks
+networks:
+  app-network:
+    driver: bridge
+    external: true
+#Volumes
+volumes:
+  dbdata:
+    driver: local
